@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
 
 module top_cnn #(
+  parameter VIVADO_PROJECT_LOCATION = "C:/mini project/MNIST-CNN-FPGA-main/cnn_verilog",
   parameter IN_IMG_NUM = 10,
   parameter FILTER_WIDTH = 5,
 
@@ -57,7 +58,7 @@ module top_cnn #(
 
 
     top #(
-      .VIVADO_PROJECT_LOCATION("F:/cnn_verilog"),
+      .VIVADO_PROJECT_LOCATION(VIVADO_PROJECT_LOCATION),
       .IN_IMG_NUM       (IN_IMG_NUM),
       .X_BUF_DATA_WIDTH (X_BUF_DATA_WIDTH),
       .X_BUF_DEPTH      (X_BUF_DEPTH),

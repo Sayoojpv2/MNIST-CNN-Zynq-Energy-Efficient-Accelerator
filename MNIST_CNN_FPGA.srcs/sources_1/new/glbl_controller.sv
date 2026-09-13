@@ -582,30 +582,7 @@ always @(*) begin
                 conv_done           = 1'd1;
             end
 
-            FC_SET : begin
-                all_clear           = 1'b0;
-                IMG_CNT             = IMG_CNT;
-                IMG_BASE            = IMG_BASE;
-                cnt_en              = 1'b1;
-                PE_en               = 1'b0;
-                PE_clear            = 1'b0;
-                rPE_valid_i         = 1'd0;
-                Conv_Layer          = Conv_Layer;
-                Bias_Sel            = 1'b1;
-                Layer_change        = 1'd0;
-                ACC_wr_en           = 1'd0;
-                ACC_rd_en           = 1'd0;
-                Weight_base         = Weight_base;
-                Image_rom_control   = 1'd0;    // Image ROM Enable
-                Slide_rd_en         = 1'd0;    
-                Slide_clear         = 1'd1;
-                BUF1_wr_en          = 1'd0;
-                rBUF1_rd_en         = 1'd0;
-                FIFO_valid          = 1'd0;
-                BUF2_wr_en          = 1'b0;
-                BUF2_rd_en          = 1'b0;
-                conv_done           = 1'd0;
-            end
+            // NOTE: duplicate FC_SET case removed (SADCG bugfix)
 
             CHECK_CNT : begin
                 all_clear           = 1'b1;

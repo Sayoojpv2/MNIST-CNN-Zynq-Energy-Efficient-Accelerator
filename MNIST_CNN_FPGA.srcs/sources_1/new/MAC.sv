@@ -1,4 +1,4 @@
-module MAC( //2024.10.13 update
+module MAC( //2024.10.13 update — SADCG modified
     input wire                  clk_i,
     input wire                  rstn_i,
     input wire                  clear_i,
@@ -22,6 +22,17 @@ reg acc_en;
 
 assign valid_o = valid_out;
 
+// ============================================================
+// SADCG: Sparsity-Aware Dynamic Clock Gating for FC MAC
+// ============================================================
+// When the latched activation (input_ff) is zero, the multiply
+// result is always zero.  Skip the DSP operation and directly
+// assign mul = 0.  Pipeline timing (mac_en → mac_en2 → acc_en)
+// is unchanged, so the FC_Controller state machine is not
+// affected.  The accumulator adds 0 — numerically identical.
+// ============================================================
+wire activation_zero = (input_ff == 12'sd0);
+
 always @(posedge clk_i) begin
     mac_en2 <= mac_en_i;
     acc_en <= mac_en2;
@@ -44,7 +55,11 @@ always @(posedge clk_i) begin
             weight_ff[7:0] <= weight_i[7:0];
             input_ff[11:0] <= input_i[11:0];
 
-            mul[19:0] <= $signed(input_ff) * $signed(weight_ff);
+            // SADCG: gate multiply when latched activation is zero
+            if (~activation_zero)
+                mul[19:0] <= $signed(input_ff) * $signed(weight_ff);
+            else
+                mul[19:0] <= 20'h0000_0;
         end
         if (acc_en) begin
             acc[19:0] <= $signed(acc[19:0]) + $signed(mul[19:0]);
@@ -56,4 +71,22 @@ always @(posedge clk_i) begin
 end
 
 assign data_o[19:0] = (valid_out) ? acc[19:0] : 20'hzzzz_z;
+
+// ============================================================
+// Simulation-only statistics (not synthesized)
+// ============================================================
+// synthesis translate_off
+reg [31:0] sadcg_mac_total;
+reg [31:0] sadcg_mac_gated;
+always @(posedge clk_i)
+    if (~rstn_i | clear1) begin
+        sadcg_mac_total  <= 32'd0;
+        sadcg_mac_gated  <= 32'd0;
+    end else if (mac_en_i) begin
+        sadcg_mac_total  <= sadcg_mac_total + 32'd1;
+        if (activation_zero)
+            sadcg_mac_gated  <= sadcg_mac_gated + 32'd1;
+    end
+// synthesis translate_on
+
 endmodule

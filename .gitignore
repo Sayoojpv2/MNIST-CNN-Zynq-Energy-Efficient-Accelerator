@@ -1,0 +1,50 @@
+# ============================================================
+# Vivado FPGA Project Ignored Files & Build Artifacts
+# ============================================================
+# Vivado temporary run directories & journals/logs
+.Xil/
+*.log
+*.jou
+*.str
+*.backup.log
+*.backup.jou
+vivado_pid*
+*.zip
+
+# Vivado generated build outputs (checkpoints, netlists, bitstreams)
+# Note: Key historical reports have been preserved in reports/
+*.runs/
+
+# Vivado project caches & hardware manager state
+*.cache/
+*.hw/
+*.ip_user_files/
+
+# Vivado simulation outputs & waveforms
+*.sim/
+*.wdb
+*.vcd
+
+# Vivado SDK / Vitis temporary build directories
+*.sdk/.metadata/
+*.sdk/*/Debug/
+*.sdk/*/Release/
+
+# ============================================================
+# Simulator Temporary Files (ModelSim / QuestaSim)
+# ============================================================
+work/
+transcript
+*.wlf
+modelsim.ini
+*.mpf
+*.mti
+
+# ============================================================
+# OS & Editor Temporary Files
+# ============================================================
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.bak

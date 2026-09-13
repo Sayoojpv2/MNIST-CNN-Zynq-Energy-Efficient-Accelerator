@@ -1,6 +1,6 @@
 module top #(
     /////////// MUST write data location//////////////////////
-    parameter VIVADO_PROJECT_LOCATION = "F:/cnn_verilog",
+    parameter VIVADO_PROJECT_LOCATION = "C:/mini project/MNIST-CNN-FPGA-main/cnn_verilog",
     parameter IN_IMG_NUM = 10,
     parameter X_BUF_DATA_WIDTH = 8,  	            
     parameter X_BUF_DEPTH = 784*IN_IMG_NUM,
