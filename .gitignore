@@ -48,3 +48,7 @@ Thumbs.db
 *~
 *.swp
 *.bak
+
+# ModelSim regression outputs (sim/modelsim/run_all.do)
+sim/modelsim/out/
+*.vcd

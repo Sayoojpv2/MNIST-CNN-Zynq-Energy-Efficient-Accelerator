@@ -1,459 +1,149 @@
-# An Energy-Efficient Hardware Accelerator for Convolutional Neural Network on Zynq SoC
+# MNIST CNN Accelerator on Zynq-7000: college mini-project record
 
-[![FPGA](https://img.shields.io/badge/FPGA-Xilinx%20Zynq--7000%20(XC7Z020)-red.svg)](https://www.xilinx.com/products/silicon-devices/soc/zynq-7000.html)
-[![Board](https://img.shields.io/badge/Board-Digilent%20Zybo%20Z7--20-blue.svg)](https://digilent.com/reference/programmable-logic/zybo-z7/start)
-[![Language](https://img.shields.io/badge/HDL-Verilog%20%7C%20SystemVerilog-blue.svg)]()
-[![Precision](https://img.shields.io/badge/Precision-INT8%20Weights%20%7C%2012--bit%20Activations-green.svg)]()
-[![Optimization](https://img.shields.io/badge/Energy%20Opt-SADCG%20Clock--Enable-orange.svg)]()
-[![Accuracy](https://img.shields.io/badge/Accuracy-10%2F10%20(100%25)-brightgreen.svg)]()
+A Verilog CNN accelerator for MNIST handwritten-digit classification on a
+Xilinx Zynq-7000 (XC7Z020). The ARM processing system (PS) collects results over
+AXI and sends them to MATLAB over UART.
 
-> **Project Report, Publication & Presentation**:
-> - 📄 **Full Project Report**: [docs/Project_Report.pdf](docs/Project_Report.pdf)
-> - 📑 **IEEE Conference Paper**: [docs/IEEE_Paper.pdf](docs/IEEE_Paper.pdf)
-> - 📊 **Final Review Presentation**: [docs/Final_Presentation.pdf](docs/Final_Presentation.pdf)
-> - 🔍 **Project Recovery Log**: [PROJECT_RECOVERY.md](PROJECT_RECOVERY.md)
-> - ⚡ **Energy Optimization Technical Notes**: [ENERGY_OPTIMIZATION.md](ENERGY_OPTIMIZATION.md)
+> **Read this first: provenance.**
+> This repository is an honest record, not the original working tree.
+>
+> * The accelerator RTL, block design, SDK code and MATLAB script come from the
+>   open-source project **[foodinsect/MNIST-CNN-FPGA](https://github.com/foodinsect/MNIST-CNN-FPGA)**
+>   (MIT licence, © 2024 Hoooo), originally built for the Digilent Zybo Z7-20.
+> * For our March 2026 mini-project we **retargeted that design to an Avnet
+>   ZedBoard**, added an AXI GPIO input path and an interactive single-digit
+>   demo, implemented it in Vivado 2019.1 and ran it on the board.
+>   **Those modified project files were later deleted.** What survives is
+>   screenshots, a photo and the college documents (see [Evidence](#evidence)).
+> * In September 2026 this repository was rebuilt from a fresh download of the
+>   upstream project with Google Antigravity (AI assistant). That session also
+>   wrote the "SADCG" energy-optimisation code. An audit in November 2026
+>   (Claude Code) showed that code changes nothing measurable.
+>
+> Full details: [`docs/RECOVERY_REPORT.md`](docs/RECOVERY_REPORT.md) ·
+> per-file classification: [`PROJECT_RECOVERY.md`](PROJECT_RECOVERY.md).
 
----
+## Project
 
-## Table of Contents
+*An Energy-Efficient Hardware Accelerator for Convolutional Neural Network on
+Zynq SoC*: B.Tech ECE mini-project, Team 06 (2023–27 batch), Muthoot Institute
+of Technology and Science, March 2026. Team: Adith M, Anandhakrishnan M,
+Benison P Baby, Sayooj P V. Guides: Ms Deepa Prabhu, Ms Nayana P K.
+Documents: [report](docs/Project_Report.pdf) · [IEEE-format paper](docs/IEEE_Paper.pdf) ·
+[final review presentation](docs/Final_Presentation.pdf).
 
-- [Overview](#overview)
-- [Target Hardware & Platform Specifications](#target-hardware--platform-specifications)
-- [System Architecture](#system-architecture)
-  - [Heterogeneous Partitioning (PS + PL)](#heterogeneous-partitioning-ps--pl)
-  - [AXI Interconnect & Shared BRAM Interface](#axi-interconnect--shared-bram-interface)
-  - [Methodology & Top-Level Block Diagram](#methodology--top-level-block-diagram)
-- [CNN Architecture & Model Pipeline](#cnn-architecture--model-pipeline)
-  - [Layer-by-Layer Dimensions](#layer-by-layer-dimensions)
-  - [Quantized Datapath & Arithmetic Precision](#quantized-datapath--arithmetic-precision)
-- [Hardware Execution & PE Array Organization](#hardware-execution--pe-array-organization)
-  - [1. 6-Row Sliding Window Line Buffer](#1-6-row-sliding-window-line-buffer)
-  - [2. PE Array & Multiplier / DSP Resource Count](#2-pe-array--multiplier--dsp-resource-count)
-  - [3. Sparsity-Aware Dynamic Clock Gating (SADCG)](#3-sparsity-aware-dynamic-clock-gating-sadcg)
-- [Host Communication & MATLAB Integration](#host-communication--matlab-integration)
-  - [Processing System Software (`helloworld.c`)](#processing-system-software-helloworldc)
-  - [Host Verification Interface (`matlab/mlp_demo.m`)](#host-verification-interface-matlabmlp_demom)
-- [Experimental Results & Verification](#experimental-results--verification)
-  - [Behavioral Simulation (ModelSim / Vivado)](#behavioral-simulation-modelsim--vivado)
-  - [SADCG Cycle-by-Cycle Equivalence Verification](#sadcg-cycle-by-cycle-equivalence-verification)
-  - [Real-Time Handwritten Digit Inference](#real-time-handwritten-digit-inference)
-  - [FPGA Hardware Verification](#fpga-hardware-verification)
-- [Power & Implementation Metrics (Historical)](#power--implementation-metrics-historical)
-- [Repository Structure](#repository-structure)
-- [Build and Simulation Instructions](#build-and-simulation-instructions)
-  - [Running ModelSim Behavioral Simulation](#running-modelsim-behavioral-simulation)
-  - [Running SADCG Equivalence Verification](#running-sadcg-equivalence-verification)
-  - [Opening in Xilinx Vivado](#opening-in-xilinx-vivado)
-- [Authors & Acknowledgments](#authors--acknowledgments)
+## What is established
 
----
-
-## Overview
-
-Deploying deep Convolutional Neural Networks (CNNs) on resource-constrained edge devices demands strict energy management and minimal memory bandwidth overhead. This project implements a high-throughput, energy-efficient CNN inference accelerator on the **Xilinx Zynq-7000 All-Programmable SoC**, targeting handwritten digit classification on the **MNIST dataset** ($28 \times 28$ grayscale images).
-
-The accelerator incorporates two complementary architectural techniques:
-
-1. **Sliding-Window Line Buffering**: An on-chip 6-row line buffer (`Sliding_Window.sv`) streams incoming pixels from dual-port BRAM into a parallel 2D Processing Element (PE) array, eliminating external memory stalls and enabling continuous spatial convolution across filter rows.
-2. **Sparsity-Aware Dynamic Clock Gating (SADCG)**: Explores activation sparsity ($>50\%$ zeros) generated by the non-linear ReLU activation function. Zero activations dynamically deassert clock enables on the multipliers and accumulators, suppressing unnecessary switching transitions in Xilinx DSP48E1 slices without creating hazardous combinational clocks.
-
-![Methodology Block Diagram](results/methodology_block_diagram.jpg)
-
----
-
-## Target Hardware & Platform Specifications
-
-All specifications below are verified directly against the synthesizable RTL, XDC constraints, Vivado project file (`MNIST_CNN_FPGA.xpr`), and routed implementation reports:
-
-| Specification | Hardware Setting / Value | Source Reference |
+| | Status | Evidence |
 |---|---|---|
-| **FPGA Device Part** | **`xc7z020clg400-1`** | `MNIST_CNN_FPGA.xpr`, synthesis & implementation runs |
-| **Target Development Board** | **Digilent Zybo Z7-20** (`digilentinc.com:zybo-z7-20:part0:1.0`) | `MNIST_CNN_FPGA.xpr`, `Zybo-Z7-Master.xdc` |
-| **Secondary Test Platform** | **ZedBoard Zynq-7000** (`xc7z020clg484-1`) | Compatible XC7Z020 evaluation board used in lab review |
-| **Accelerator Core Clock (`clk`)** | **125.0 MHz** ($8.00\text{ ns}$ period, timing closed: $WNS = +0.023\text{ ns}$) | `Zybo-Z7-Master.xdc`, `design_1_wrapper_timing_summary_routed.rpt` |
-| **PS AXI Fabric Clock (`clk_fpga_0`)** | **50.0 MHz** ($20.00\text{ ns}$ period) | `design_1.bd`, `design_1_wrapper_timing_summary_routed.rpt` |
-| **Simulation Testbench Clock** | **100.0 MHz** ($10.00\text{ ns}$ period, `#5 clk = ~clk;`) | `tb_top_cnn.sv` |
-| **Total DSP Slices Used** | **160 / 220 DSP48E1 slices (72.73% utilization)** | `design_1_top_cnn_0_0_utilization_synth.rpt` |
-| **Slice LUT Utilization** | **15,661 / 53,200 LUTs (29.44%)** | `design_1_top_cnn_0_0_utilization_synth.rpt` |
-| **Slice Register Utilization** | **16,043 / 106,400 FFs (15.08%)** | `design_1_top_cnn_0_0_utilization_synth.rpt` |
-| **Block RAM Utilization** | **9 RAMB18E1 (4.5 Tile, 3.21%)** | `design_1_top_cnn_0_0_utilization_synth.rpt` |
-| **Host UART Interface** | **115200 baud**, 8 data bits, no parity, 1 stop bit | `helloworld.c`, `matlab/mlp_demo.m` |
+| Design retargeted to ZedBoard `xc7z020clg484-1` in Vivado 2019.1 | ✅ Original | screenshots 21 Feb, 9 Mar 2026 |
+| Implementation + bitstream: LUT 17,890 · FF 20,302 · BRAM 8.5 · DSP 160 · WNS +4.532 ns | ✅ Original | [design runs](results/evidence/2026-03-09_vivado-design-runs-zedboard-bitstream-complete.png) |
+| Vectorless power estimate **1.725 W** (PS7 1.399 W, PL dynamic ≈0.18 W, static 0.143 W; confidence *Low*) | ✅ Original | [power summary](results/evidence/2026-03-02_vivado-implemented-power-1.725W-xc7z020clg484.png) |
+| Physical ZedBoard programmed over JTAG | ✅ Original | [SDK log](results/evidence/2026-02-21_sdk-cnn-interactive-jtag-fpga-configured.png), [photo](results/evidence/2026-03-21_zedboard-powered-photo.jpeg) |
+| 10 stored test images classified 0–9, results shown in MATLAB via UART | ✅ Original (screenshot) | [MATLAB figure](results/evidence/2026-02-21_matlab-uart-predictions-0-to-9.png) |
+| AXI GPIO + interactive single-digit demo (MS Paint → MATLAB "AI Prediction") | ✅ Original, ⚠️ source lost | [block design](results/evidence/2026-02-21_vivado-block-design-with-axi-gpio.png), [input](results/evidence/2026-03-21_mspaint-handwritten-input-4.png), [prediction "4"](results/evidence/2026-03-21_matlab-single-digit-prediction-4.png), [misprediction "1"→9](results/evidence/2026-02-21_matlab-single-digit-misprediction-1-as-9.png) |
+| Whether the single-digit prediction was computed on the FPGA | ❓ Unverified | the code was not recovered |
+| SADCG clock gating in the original design; 2.367 W → 2.002 W / "41 %" figures in report & paper | ❓ **Unverified**: no supporting evidence found | conflicts with the 1.725 W result and the unchanged 160-DSP count |
+| RTL behavioural simulation of this repository (ModelSim, 10 images) | ✅ Reproduced Nov 2026 | [below](#simulation) |
 
----
-
-## System Architecture
-
-### Heterogeneous Partitioning (PS + PL)
-
-The design is split across the dual-core ARM Cortex-A9 Processing System (PS) and the Programmable Logic (PL):
-
-* **Processing System (PS)**:
-  * Manages high-level communication with the host computer over UART (115200 baud).
-  * Services completion interrupts (`done_intr_o`, IRQ ID 61) triggered by the PL accelerator.
-  * Reads the 10 classification score results from shared memory and transmits them to MATLAB.
-* **Programmable Logic (PL)**:
-  * Implements the synthesizable CNN accelerator clocked at **125 MHz**.
-  * Contains the image line buffer, 6 convolution PEs (150 multipliers), fused ReLU / Max-Pooling units, intermediate feature buffers (`BUF1`, `BUF2`), and the 10-MAC Fully Connected classifier.
-  * Asserts `done_intr_o` (interrupt to PS GIC) and illuminates `done_led_o` on completion.
-
-### AXI Interconnect & Shared BRAM Interface
-
-Data transfer between the ARM Cortex-A9 CPU and the CNN accelerator uses memory-mapped AXI4:
-
-1. **AXI SmartConnect (`axi_smc`)**: Connects the PS General Purpose Master port `M_AXI_GP0` to an AXI BRAM Controller (`axi_bram_ctrl_0`).
-2. **Dual-Port Shared BRAM (`axi_bram_ctrl_0_bram`)**:
-   - **Port A**: Connected to `axi_bram_ctrl_0` (memory-mapped to the PS at `XPAR_BRAM_0_BASEADDR = 0x40000000`).
-   - **Port B**: Connected directly to the accelerator's output interface (`y_buf_addr`, `y_buf_data`, `y_buf_en`, `y_buf_wr_en`).
-3. **Interrupt Handshake**: When inference finishes, `top_cnn` asserts `done_intr_o`. The ARM Generic Interrupt Controller (GIC) invokes `DeviceDriverHandler`, which reads the 10 32-bit output words directly from BRAM over AXI.
-
----
-
-## CNN Architecture & Model Pipeline
-
-The accelerator implements a sequential feed-forward CNN tailored for MNIST digit recognition:
+## Architecture (as in this repository's RTL)
 
 ```
-Input Image (28x28x1, Grayscale)
-  │
-  ▼
-[Conv1] 5x5 Kernel, 3 Filters, Stride 1, Valid Pad  ──► (24x24x3)
-  │
-  ▼
-[Fused ReLU1 + MaxPool1] 2x2 Spatial Window, Stride 2 ──► (12x12x3, saved to BUF1)
-  │
-  ▼
-[Conv2] 5x5 Kernel, 3 Filters, Stride 1, Valid Pad  ──► (8x8x3)
-  │
-  ▼
-[Fused ReLU2 + MaxPool2] 2x2 Spatial Window, Stride 2 ──► (4x4x3 = 48 elements, saved to BUF2)
-  │
-  ▼
-[FC Layer] 48-input x 10-output Matrix Multiplication ──► (10 class scores)
-  │
-  ▼
-[Argmax Comparator (Max_finder)]                     ──► Predicted Digit Class (0-9)
+Zynq PS (ARM A9, bare-metal) ──AXI──► AXI BRAM ctrl ◄──► dual-port BRAM ◄── results (y_buf)
+        ▲  IRQ 61 (done_intr_o)                                           │
+        └────────── UART 115200 ──► MATLAB (mlp_demo.m)                   │
+PL @ 50 MHz (clk_fpga_0):                                                 │
+ image BRAM (10 × 28×28, preloaded) → 6-row sliding window → PE array ────┘
+   conv1 5×5, 1→3 ch → ReLU + 2×2 max-pool → conv2 5×5, 3→3 ch → ReLU + pool
+   → 48 features → FC 48→10 (10 MACs) → argmax → class 0–9
 ```
 
-### Layer-by-Layer Dimensions
+* **PE array:** 2 PEs × 3 channels, each with 25 multipliers = 150, plus 10 FC MACs = **160 multipliers = 160 DSP48E1**.
+* **Precision:** 8-bit unsigned input pixels (zero-extended to 12 bit), 8-bit signed weights, 20-bit products, 20-bit adder tree (no bit growth). Conv1 cannot overflow with the shipped weights. Conv2 has not been analysed.
+* **Clock:** the CNN runs on the PS fabric clock `clk_fpga_0` = **50 MHz**. The 125 MHz `sys_clk_pin` in the Zybo XDC applies to an unused pin. Testbenches use a 10 ns clock.
+* **Images:** stored in BRAM at bitstream build time (`cnn_verilog/INT8_input_image_hex.txt`). In this repository's flow, MATLAB only receives and plots results.
 
-| Layer | Input Size | Filter / Kernel | Stride | Output Size | Buffering / Destination |
-|---|---|---|---|---|---|
-| **Input Image** | $28 \times 28 \times 1$ | - | - | $28 \times 28 \times 1$ | `Sliding_Window.sv` (6 rows) |
-| **Conv1** | $28 \times 28 \times 1$ | $5 \times 5 \times 3$ filters | 1 | $24 \times 24 \times 3$ | Streaming to ReLU1 |
-| **ReLU1 + Pool1** | $24 \times 24 \times 3$ | $2 \times 2$ Max-Pool | 2 | $12 \times 12 \times 3$ | Stored in `BUF1_ch1`, `BUF1_ch2`, `BUF1_ch3` |
-| **Conv2** | $12 \times 12 \times 3$ | $5 \times 5 \times 3$ filters | 1 | $8 \times 8 \times 3$ | Streaming to ReLU2 |
-| **ReLU2 + Pool2** | $8 \times 8 \times 3$ | $2 \times 2$ Max-Pool | 2 | $4 \times 4 \times 3$ (48) | Stored in `BUF2_ch1`, `BUF2_ch2`, `BUF2_ch3` |
-| **FC Layer** | 48 elements | $48 \times 10$ weights | - | 10 classes | Evaluated by 10 parallel MACs |
-| **Argmax** | 10 scores | Maximum search | - | 1 class ($0-9$) | Output to `y_buf` BRAM |
+## Two RTL copies: which one is real
 
-### Quantized Datapath & Arithmetic Precision
+| Path | Used by | Notes |
+|---|---|---|
+| `MNIST_CNN_FPGA.srcs/sources_1/imports/cnn/*.v` | **Vivado project (`.xpr`) synthesis/implementation** | Reference RTL; produced every Vivado result above |
+| `MNIST_CNN_FPGA.srcs/sources_1/new/*.sv` | ModelSim flow only | A different revision of the upstream RTL; contains the Sep 2026 SADCG edits in `mul.sv`/`MAC.sv` |
 
-The hardware datapath uses fixed-point arithmetic verified across the RTL:
+## Simulation
 
-| Datapath Signal | Bit Width | Representation | Description |
+Regression (ModelSim; verified with ModelSim-Altera Starter 10.1d on Windows):
+
+```bash
+cd sim/modelsim
+vsim -c -do run_all.do
+```
+
+Results from 6 Nov 2026:
+
+| Configuration | `tb_top_cnn` | `tb_top` | `tb_sadcg_verify` |
 |---|---|---|---|
-| **Kernel Weights (`weight_in`, `weight_i`)** | **8-bit** | Signed (`signed [7:0]`) | Quantized filter weights (Conv1, Conv2, FC) |
-| **Biases (`bias_in`, `bias_i`)** | **8-bit** | Signed (`signed [7:0]`) | Quantized channel and FC layer biases |
-| **Pixel / Activation Data (`data_in`, `input_i`)** | **12-bit** | Signed (`signed [11:0]`) | Q4.8 format (8 fractional bits) |
-| **Multiplication Product (`result`, `mul`)** | **20-bit** | Signed (`signed [19:0]`) | Exact $12\text{-bit} \times 8\text{-bit} = 20\text{-bit}$ product |
-| **Accumulator Output (`acc`, `pe_out`)** | **20-bit** | Signed (`signed [19:0]`) | Sum of products before scaling |
-| **FC Output Word (`data_o`)** | **32-bit** | Word (`[31:0]`) | Formatted as `{28'd0, result[3:0]}` (predicted digit) |
+| Vivado source set (`imports/cnn/*.v`) | PASS: 0–9 | PASS: 0–9 | n/a |
+| `new/*.sv` (with SADCG edits) | PASS: 0–9 | PASS: 0–9 | PASS (0 errors) |
 
----
+The 10 stored images are the digits 0,1,…,9 in order, and the script checks the
+captured outputs against that. If the repository sits in a very long Windows
+path, set `MNIST_SIM_LIBDIR` to a short folder (see the script header).
+In Vivado: open `MNIST_CNN_FPGA.xpr` (needs Vivado 2019.1 and Digilent board
+files) and run behavioural simulation of `tb_top_cnn`. **Not re-verified in
+2026-11** (no Vivado available).
 
-## Hardware Execution & PE Array Organization
+## About SADCG
 
-### 1. 6-Row Sliding Window Line Buffer
+See [`ENERGY_OPTIMIZATION.md`](ENERGY_OPTIMIZATION.md). In short: the
+September 2026 code writes 0 when an activation is 0, which is what the
+multiplier would produce anyway. It infers no clock enable. A VCD comparison
+shows **identical** toggle counts on all 160 multiplier registers. It is also
+not in the Vivado source set. No power saving is claimed.
 
-Standard dual-port BRAM blocks can deliver only two pixels per clock cycle, creating a memory bottleneck for $5 \times 5$ spatial convolutions. The `Sliding_Window.sv` module maintains a 6-row on-chip shift buffer (`BUF_Slide [5:0][27:0]`):
-- Fetches 2 pixels/cycle into shift registers (`BUF_SHIFT`).
-- On every row boundary (`slide_trigger`), shifts 2 rows upward.
-- Emits a continuous $6 \times 1$ pixel column on each clock cycle, providing zero-latency sliding-window input for the 2D PE array.
+## Evidence
 
-### 2. PE Array & Multiplier / DSP Resource Count
+Copies of original screenshots and one photo. Seven are unmodified. For privacy, two are cropped (a chat window and the Windows taskbar removed) and the board photo has its serial sticker blacked out. The manifest lists their original file names,
+hashes and what each does and does not prove:
+[`results/evidence/EVIDENCE_MANIFEST.md`](results/evidence/EVIDENCE_MANIFEST.md).
 
-The design contains **160 dedicated hardware multipliers**, matching the **160 DSP48E1 slices** reported by Vivado:
+| | |
+|---|---|
+| ![design runs](results/evidence/2026-03-09_vivado-design-runs-zedboard-bitstream-complete.png) ZedBoard implementation, bitstream complete (9 Mar 2026) | ![power](results/evidence/2026-03-02_vivado-implemented-power-1.725W-xc7z020clg484.png) Vectorless power 1.725 W (2 Mar 2026) |
+| ![bd](results/evidence/2026-02-21_vivado-block-design-with-axi-gpio.png) Block design with the added AXI GPIO (lost) | ![sdk](results/evidence/2026-02-21_sdk-cnn-interactive-jtag-fpga-configured.png) SDK: FPGA configured over a Digilent Zed JTAG cable |
+| ![matlab](results/evidence/2026-02-21_matlab-uart-predictions-0-to-9.png) 10 stored images → 0–9 via UART | ![board](results/evidence/2026-03-21_zedboard-powered-photo.jpeg) ZedBoard, powered and configured |
+| ![paint](results/evidence/2026-03-21_mspaint-handwritten-input-4.png) Hand-drawn input | ![pred](results/evidence/2026-03-21_matlab-single-digit-prediction-4.png) MATLAB "AI Prediction: 4" |
+| ![wrong](results/evidence/2026-02-21_matlab-single-digit-misprediction-1-as-9.png) A misprediction ("1" → 9) during testing | ![sim](results/evidence/2026-03-03_vivado-behavioral-sim-tb_top_cnn-first-1us.png) Vivado behavioural sim (first 1 µs only) |
 
-1. **Convolution PE Array (`PE_Array.sv`)**:
-   - 3 filter channels (Filter 1, Filter 2, Filter 3).
-   - Each channel instantiates **2 parallel PEs** (`PE_Ch1`, `PE_Ch2`, `PE_Ch3`) to compute 2 adjacent output rows concurrently.
-   - Total Convolution PEs = $3 \times 2 = \mathbf{6\text{ PEs}}$.
-   - Each individual PE (`PE.sv`) contains **25 multipliers** (`mul MUL` instances) and 1 accumulator tree (`acc.sv`).
-   - Total Multipliers in Convolution PE Array = $6\text{ PEs} \times 25\text{ multipliers} = \mathbf{150\text{ multipliers}}$.
-2. **Fully Connected Layer (`matmul.sv`)**:
-   - Instantiates **10 parallel MAC units** (`MAC MAC_inst`, one for each digit class $0-9$).
-   - Total Multipliers in FC Layer = $\mathbf{10\text{ multipliers}}$.
-3. **Total Accelerator Multipliers / DSP48E1 Slices**:
-   $$\mathbf{150} \text{ (Conv PEs)} + \mathbf{10} \text{ (FC Layer)} = \mathbf{160\text{ DSP48E1 Slices}}$$
+`reports/*.rpt` are the **upstream author's** Vivado reports (Zybo part, 12 May
+2025: 1.920 W, WNS +0.023 ns). They are kept for reference and are not our
+results. `results/methodology_block_diagram.jpg` is a conceptual slide from the
+presentation.
 
-### 3. Sparsity-Aware Dynamic Clock Gating (SADCG)
-
-ReLU activations clamp negative features to zero ($f(x) = \max(0, x)$). In convolutional layers, $50\%$ to $70\%$ of intermediate activations are zero. Multiplying by zero wastes dynamic switching power without changing the running accumulator sum.
-
-SADCG intercepts zero activations in synthesizable RTL:
-
-* **Multiplier Enable Gating (`mul.sv`)**:
-  ```systemverilog
-  wire activation_zero = (data_i == 12'sd0);
-  wire compute_en      = valid_i & ~activation_zero;
-
-  always @(posedge clk_i)
-      if (!rstn_i)
-          result <= 20'h00000;
-      else if (compute_en)
-          result <= $signed(data_i) * $signed(weight_i);
-      else
-          result <= 20'h00000;
-  ```
-  `compute_en` maps directly to the DSP48E1 clock-enable pins (`CEA`, `CEB`, `CEM`, `CEP`), stopping internal pipeline register toggling when activations are zero.
-
-* **FC Layer MAC Gating (`MAC.sv`)**:
-  ```systemverilog
-  wire activation_zero = (input_ff == 12'sd0);
-
-  always @(posedge clk_i) begin
-      if (~rstn_i | clear1) begin
-          acc[19:0]  <= 20'h0000_0;
-          mul[19:0]  <= 20'h0000_0;
-      end else begin
-          if (mac_en_i) begin
-              weight_ff[7:0]  <= weight_i[7:0];
-              input_ff[11:0]  <= input_i[11:0];
-
-              if (~activation_zero)
-                  mul[19:0] <= $signed(input_ff) * $signed(weight_ff);
-              else
-                  mul[19:0] <= 20'h0000_0;
-          end
-          if (acc_en)
-              acc[19:0] <= $signed(acc[19:0]) + $signed(mul[19:0]);
-      end
-  end
-  ```
-  Numerical equivalence is 100% preserved because adding zero leaves the accumulator invariant.
-
----
-
-## Host Communication & MATLAB Integration
-
-### Processing System Software (`helloworld.c`)
-
-The standalone C application running on the ARM Cortex-A9 CPU:
-1. Initializes the SCU Generic Interrupt Controller (GIC) and registers `DeviceDriverHandler` for interrupt ID 61 (`done_intr_o`).
-2. Configures PS7 UART to **115200 baud rate**.
-3. When the accelerator asserts `done_intr_o`, the ISR reads 10 32-bit words from `XPAR_BRAM_0_BASEADDR` (40 bytes total) and streams the raw bytes over UART.
-
-### Host Verification Interface (`matlab/mlp_demo.m`)
-
-The host MATLAB script verifies the accelerator output in real time:
-1. Opens serial communication: `s = serialport("COM6", 115200, "DataBits", 8, "Timeout", 90);`.
-2. Reads 40 bytes: `t_data = read(s, 40, "int8");`.
-3. Reconstructs the 10 classification results: `predict = double(typecast(int8(t_data), 'int32'));`.
-4. Displays the input MNIST images alongside the hardware predicted labels in a graphical figure.
-
----
-
-## Experimental Results & Verification
-
-### Behavioral Simulation (ModelSim / Vivado)
-
-The accelerator pipeline was verified using ModelSim SE-64 and Vivado Simulator on 10 consecutive MNIST benchmark test images:
+## Repository layout
 
 ```
-# =======================================================
-#               MNIST CNN INFERENCE SUMMARY              
-# =======================================================
-# Total Test Images Processed: 10
-# Total Correct Predictions  : 10
-# Total Incorrect Predictions: 0
-# Overall Model Accuracy     : 100.00%
-# =======================================================
+MNIST_CNN_FPGA.xpr / .srcs / .sdk   upstream Vivado 2019.1 project (Zybo Z7-20)
+cnn_verilog/data/                   weights, biases, 10 test images, 1000-image vectors
+matlab/mlp_demo.m                   UART result viewer (COM6, 115200)
+reports/                            upstream reference Vivado reports
+docs/                               report, paper, presentation, RECOVERY_REPORT.md
+results/evidence/                   original screenshots + manifest
+sim/                                ModelSim regression and toggle tools (2026-11)
 ```
 
-| Image Index | Ground Truth | Hardware Prediction | Result | Cycles | Latency @ 125MHz | Latency @ 100MHz |
-|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Image 0 | **7** | **7** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 1 | **2** | **2** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 2 | **1** | **1** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 3 | **0** | **0** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 4 | **4** | **4** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 5 | **1** | **1** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 6 | **4** | **4** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 7 | **9** | **9** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 8 | **5** | **5** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
-| Image 9 | **9** | **9** | ✅ CORRECT | 10,240 | 81.9 µs | 102.4 µs |
+`cnn_verilog/mnist/` (the unused 10,000-image MNIST test set, 10,003 files) was
+removed from the working tree in Nov 2026. Restore it with
+`git checkout f9cdfe3 -- cnn_verilog/mnist`.
 
-#### Vivado Behavioral Simulation Waveform
+## Not available
 
-![Vivado Simulation Waveform](results/vivado_simulation_waveform.jpg)
+The team's modified RTL/block design/constraints, ZedBoard bitstream and reports,
+interactive SDK and MATLAB code, any original SADCG implementation, training and
+quantisation scripts, and the 1000-image testbench.
 
-### SADCG Cycle-by-Cycle Equivalence Verification
+## Credits and licence
 
-A dedicated verification testbench (`tb_sadcg_verify.sv`) was run to verify numerical equivalence:
-- **Test Duration**: 1,274 clock cycles of zero-rich activation data streams.
-- **Baseline vs. SADCG Accumulator Output**: **0 mismatches (100% numerical identity)**.
-- Confirms zero multiplier switching occurs without altering any output bits.
-
-### Real-Time Handwritten Digit Inference
-
-The accelerator was validated with newly drawn handwritten digits:
-
-| Handwritten Input Digit | AI Hardware Prediction |
-|:---:|:---:|
-| ![Handwritten Input Digit](results/handwritten_input_digit_4.jpg) | ![AI Prediction Output](results/ai_prediction_output_4.jpg) |
-| *User input drawn on host canvas (Digit '4')* | *Real-time classification result from accelerator* |
-
-### FPGA Hardware Verification
-
-Hardware testing was validated on Zynq-7000 SoC hardware:
-
-![Zynq FPGA Hardware Setup](results/zynq_fpga_board_hardware.jpg)
-
----
-
-## Power & Implementation Metrics (Historical)
-
-> **Clarification Notice on Power Metrics**:  
-> The power figures reported below represent historical implementation and power estimation runs performed in Xilinx Vivado 2019.1 during project development and documented in the official project report. They are presented here for historical design comparison.
-
-### Historical Comparison: Baseline vs. SADCG Accelerator
-
-| Metric | Baseline Architecture | SADCG-Optimized Accelerator | Improvement / Savings |
-|---|:---:|:---:|:---:|
-| **Total On-Chip Power** | **2.366 W** | **2.002 W** | **-15.4% Overall Power** |
-| **Programmable Logic (PL) Dynamic Power** | **0.873 W** | **0.509 W** | **-41.7% PL Dynamic Power** |
-| **PS7 (ARM Processing System) Power** | 1.350 W | 1.350 W | Constant |
-| **Device Static Power** | 0.143 W | 0.143 W | Invariant |
-| **Classification Accuracy (MNIST)** | 100.0% | 100.0% | **Zero accuracy loss** |
-
-### Historical Vivado Post-Implementation Power Report
-
-From post-implementation routing on `xc7z020clg400-1` (`reports/design_1_wrapper_power_routed.rpt` and Vivado GUI):
-
-![Vivado Power Report](results/vivado_power_report.jpg)
-
-* **Total On-Chip Power**: 1.725 W - 1.920 W (depending on vector switching activity)
-* **Dynamic Power Breakdown**:
-  * PS7 Processing System: **1.399 W - 1.545 W (86% - 92%)**
-  * DSP48E1 Blocks: **0.074 W - 0.101 W**
-  * Routing Signals: **0.044 W - 0.048 W**
-  * Slice Logic: **0.032 W - 0.040 W**
-  * Clock Networks: **0.029 W - 0.038 W**
-  * Block RAM (BRAM): **0.004 W - 0.005 W**
-* **Device Static Power**: **0.143 W**
-* **Junction Temperature**: 44.9°C (Thermal margin: 40.1°C)
-
----
-
-## Repository Structure
-
-```
-MNIST-CNN-FPGA-main/
-│
-├── docs/                               # Project documentation & publications
-│   ├── Project_Report.pdf              # Comprehensive project report (APJ Abdul Kalam Tech. Univ.)
-│   ├── IEEE_Paper.pdf                  # IEEE conference publication paper
-│   └── Final_Presentation.pdf          # Final review presentation slides
-│
-├── results/                            # Experimental evidence & hardware captures
-│   ├── handwritten_input_digit_4.jpg   # Raw handwritten test input (digit '4')
-│   ├── ai_prediction_output_4.jpg      # Host/AI real-time prediction output
-│   ├── vivado_simulation_waveform.jpg  # Vivado 2019.1 behavioral waveform
-│   ├── zynq_fpga_board_hardware.jpg    # Powered Zynq-7000 development board
-│   ├── methodology_block_diagram.jpg   # Accelerator system methodology diagram
-│   └── vivado_power_report.jpg         # Vivado post-implementation power report
-│
-├── MNIST_CNN_FPGA.srcs/                # Vivado project source tree
-│   ├── sources_1/new/                  # Core synthesizable RTL modules (SystemVerilog)
-│   │   ├── top.sv                      # Top-level integration wrapper
-│   │   ├── top_cnn.sv                  # Core CNN accelerator top
-│   │   ├── mul.sv                      # SADCG-enabled signed multiplier
-│   │   ├── MAC.sv                      # SADCG-enabled Multiply-Accumulate unit
-│   │   ├── PE.sv                       # Processing Element wrapper (25 multipliers)
-│   │   ├── PE_Array.sv                 # 6-PE parallel 2D convolution array (150 multipliers)
-│   │   ├── Sliding_Window.sv           # 6-row streaming line buffer
-│   │   ├── MaxPooling_ReLU.sv          # Fused ReLU activation and 2x2 max-pool
-│   │   ├── FC_Layer.sv                 # Fully connected layer matrix-vector engine
-│   │   ├── FC_Controller.sv            # FC layer sequencing and control FSM
-│   │   ├── glbl_controller.sv          # Master CNN sequencer FSM
-│   │   ├── y_buf.sv                    # Intermediate feature map buffer
-│   │   ├── BUF1.sv, BUF2.sv            # Intermediate layer staging buffers
-│   │   ├── Bias_ROM.sv, FC_Bias_ROM.sv # Layer bias ROMs
-│   │   ├── Comparator.sv, Max_finder.sv# Argmax prediction comparator
-│   │   └── FIFO.sv                     # Streaming synchronization FIFO
-│   ├── sources_1/bd/                   # Vivado IP Integrator Block Design (Zynq PS + AXI)
-│   ├── sources_1/ip/                   # Generated IP cores (ILA debug cores)
-│   ├── constrs_1/imports/01_SoC/       # Board constraint files
-│   │   └── Zybo-Z7-Master.xdc          # Pinout & 125 MHz clock constraints for Zybo Z7-20
-│   └── sim_1/new/                      # Simulation testbenches
-│       ├── tb_top_cnn.sv               # Top-level 10-digit MNIST testbench
-│       ├── tb_sadcg_verify.sv          # Cycle-accurate SADCG verification testbench
-│       └── tb_top.sv                   # System-level testbench
-│
-├── MNIST_CNN_FPGA.sdk/                 # Xilinx SDK C workspace (UART host test app)
-│   └── CNN/src/helloworld.c            # ARM Cortex-A9 interrupt handler & UART driver
-├── cnn_verilog/                        # MNIST image & weight text data for testbenches
-│   └── data/                           # Formatted weights, biases, and sample images
-├── matlab/                             # MATLAB reference model & scripts
-│   └── mlp_demo.m                      # Host UART reception & prediction visualization
-│
-├── reports/                            # Archived Vivado synthesis, timing & power reports
-│   ├── design_1_wrapper_power_routed.rpt # Routed power report (1.920 W)
-│   ├── design_1_wrapper_timing_summary_routed.rpt # Timing closure report (125 MHz)
-│   ├── design_1_wrapper_utilization_synth.rpt     # Resource utilization report
-│   └── design_1_top_cnn_0_0_utilization_synth.rpt # Accelerator sub-module utilization (160 DSPs)
-│
-├── MNIST_CNN_FPGA.xpr                  # Vivado 2019.1 Project file
-├── ENERGY_OPTIMIZATION.md              # SADCG architecture and RTL design notes
-├── PROJECT_RECOVERY.md                 # Baseline recovery and validation record
-├── .gitignore                          # Clean git tracking specification
-└── README.md                           # Master repository documentation
-```
-
----
-
-## Build and Simulation Instructions
-
-### Running ModelSim Behavioral Simulation
-
-1. Ensure ModelSim (`vsim`, `vlog`, `vlib`) is installed and available in your `PATH`.
-2. Open a terminal in the project root directory.
-3. Compile the RTL sources and run the 10-image MNIST verification testbench:
-
-```powershell
-# Create working library
-vlib work
-
-# Compile all SystemVerilog RTL and testbench files
-vlog -sv MNIST_CNN_FPGA.srcs/sources_1/new/*.sv MNIST_CNN_FPGA.srcs/sim_1/new/tb_top_cnn.sv
-
-# Run simulation in console mode
-vsim -c -do "run -all; quit -f" tb_top_cnn
-```
-
-The simulation loads test images 0 through 9 from `cnn_verilog/` and outputs the inference results and 100% accuracy report to stdout.
-
-### Running SADCG Equivalence Verification
-
-To run the cycle-by-cycle equivalence verification comparing baseline vs. SADCG multiplier and MAC modules:
-
-```powershell
-vlog -sv MNIST_CNN_FPGA.srcs/sources_1/new/mul.sv MNIST_CNN_FPGA.srcs/sources_1/new/MAC.sv MNIST_CNN_FPGA.srcs/sim_1/new/tb_sadcg_verify.sv
-vsim -c -do "run -all; quit -f" tb_sadcg_verify
-```
-
-### Opening in Xilinx Vivado
-
-1. Launch **Xilinx Vivado 2019.1** (or later).
-2. Open the project: `File -> Project -> Open -> MNIST_CNN_FPGA.xpr`.
-3. To run behavioral simulation: Click **Run Simulation -> Run Behavioral Simulation**.
-4. To run implementation: Click **Run Implementation** and then **Generate Bitstream**.
-
----
-
-## Authors & Acknowledgments
-
-- **Author / Project Team**: Sayooj P V, et al.
-- **Institution**: APJ Abdul Kalam Technological University (March 2026)
-- **Special Thanks**: Department of Electronics & Communication Engineering for hardware and laboratory support.
+Accelerator design: © 2024 Hoooo ([foodinsect/MNIST-CNN-FPGA](https://github.com/foodinsect/MNIST-CNN-FPGA)), MIT licence (see `LICENSE`).
+ZedBoard port, integration and testing: Team 06 (2026). Reconstruction (Sep 2026) used Google
+Antigravity; the provenance audit (Nov 2026) used Claude Code.
