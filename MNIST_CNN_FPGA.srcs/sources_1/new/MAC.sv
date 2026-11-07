@@ -30,6 +30,13 @@ assign valid_o = valid_out;
 // assign mul = 0.  Pipeline timing (mac_en → mac_en2 → acc_en)
 // is unchanged, so the FC_Controller state machine is not
 // affected.  The accumulator adds 0 — numerically identical.
+//
+// AUDIT NOTE (2026-11, see docs/RECOVERY_REPORT.md): writing 0 into `mul`
+// when input_ff==0 gives the same register value as the multiply would
+// (0*w = 0), so `mul` toggles exactly as in the ungated code (verified by
+// VCD toggle count). input_ff/weight_ff still load every mac_en cycle.
+// No switching or power reduction has been demonstrated. This file is not
+// in the Vivado project source set (the .xpr uses imports/cnn/MAC.v).
 // ============================================================
 wire activation_zero = (input_ff == 12'sd0);
 

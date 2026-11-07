@@ -14,9 +14,16 @@ module mul (
 	// When activation == 0, the product is always 0 regardless of
 	// weight, so we skip the DSP multiply to reduce switching.
 	//
-	// On Zynq-7000 (DSP48E1), this maps to CE-pin gating:
-	//   compute_en  -> DSP48E1 CEM / CEP
-	//   When CE=0, DSP pipeline registers hold value -> no toggle.
+	// AUDIT NOTE (2026-11, see docs/RECOVERY_REPORT.md): the original claim
+	// here was "compute_en maps to DSP48E1 CEM/CEP; when CE=0 the DSP
+	// registers hold value -> no toggle". That is NOT what this RTL does.
+	// The else-branch below loads 0 into `result`, which is exactly the
+	// value 0*weight would have produced, so the register sequence is
+	// identical to the ungated code (verified: identical VCD toggle counts
+	// over the 10-image testbench). This is an assignment, not a hold, so
+	// no clock-enable is implied. This file is also NOT in the Vivado
+	// project source set (MNIST_CNN_FPGA.xpr uses imports/cnn/mul.v).
+	// No synthesis or power analysis has been run on this version.
 	// ============================================================
 	wire activation_zero = (data_i == 12'sd0);
 	wire compute_en      = valid_i & ~activation_zero;
